@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>日本語 Flashcards</title>
+  <meta name="description" content="Japanese flashcards with spaced repetition, an in-app card editor and cross-device sync.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23fff' stroke='%23ddd' stroke-width='4'/><circle cx='50' cy='50' r='24' fill='%23c8102e'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/"><span class="brand-dot" aria-hidden="true"></span><span class="jp">日本語</span>&nbsp;Flashcards</a>
+    <nav class="nav">
+      <a href="#/" data-nav="home">Study</a>
+      <a href="#/cards" data-nav="cards">Cards</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+    <button id="sync-pill" class="sync-pill" type="button" data-act="goto-sync"></button>
+  </header>
+
+  <main id="app" class="container"></main>
+
+  <div id="modal-root"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
