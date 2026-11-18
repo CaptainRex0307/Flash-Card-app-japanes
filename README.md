@@ -6,7 +6,9 @@ A Japanese flashcard app that runs in your web browser.
 - **Spaced repetition.** After each card, rate it *Again / Hard / Good / Easy*. Cards you know well come back less and less often, and cards you miss come back soon.
 - **Edit your cards in the app** (the **Cards** tab). You can add, edit, delete, move cards between decks, create your own decks, or paste a whole list of cards at once with **Bulk add**. You never need to touch the code.
 - **Progress saves automatically** in your browser.
-- **Sync between computers** through a private GitHub Gist (see below).
+- **Progress codes:** copy a short code or link, then paste it on another computer to continue where you left off. No account needed.
+- **Where you left off:** the home page shows what you studied last and has a **Continue** button.
+- **Automatic sync between computers** through a private GitHub Gist (see below).
 - Also includes: Japanese text-to-speech 🔊, Japanese→English, English→Japanese or mixed cards, a daily streak, backup/restore to a file, dark mode, and phone-friendly layout.
 
 Keyboard shortcuts while studying: **Space** flips the card, **1–4** rates it, **Space** again = Good, and **P** plays the audio.
@@ -21,7 +23,16 @@ Keyboard shortcuts while studying: **Space** flips the card, **1–4** rates it,
 
 You can also just double-click `index.html` to use it offline on one computer.
 
-## Sync across computers
+## Move your progress with a code (no account needed)
+
+1. On the computer you studied on, click **Get my progress code** (at the bottom of the home page or in **Settings**).
+2. Click **Copy code**, or **Copy link** if the app is online. Send it to yourself, for example in an email or a note.
+3. On the other computer, open the app and click **Paste a code**, or just open the link.
+4. The app shows what the code contains: cards studied, mastered, due, your streak, and where you left off. Click **Load this progress**.
+
+A code is a snapshot of that moment. After you study again, get a fresh code. If you'd rather not copy codes back and forth, turn on sync instead.
+
+## Sync across computers (automatic)
 
 Your progress is saved in each browser. To share it between computers:
 
@@ -29,6 +40,8 @@ Your progress is saved in each browser. To share it between computers:
 2. Click the link to create a GitHub token. The link already selects the **gist** permission. Choose an expiration and click **Generate token**.
 3. Copy the token (it starts with `ghp_`), paste it into the app, and click **Connect**.
 4. On each other computer, open the app and paste the same token (or a new one from the same GitHub account).
+
+Already set up sync on one computer? In **Settings → Sync**, click **Get a setup link for another computer**. Opening that link on the other computer turns sync on there with one click. The link contains your token, so treat it like a password.
 
 After that, changes sync on their own a few seconds after you make them, and again whenever you return to the tab. The data is kept in a secret gist named `japanese-flashcards-data.json` in your GitHub account. If two computers change the same card, the most recent change wins.
 

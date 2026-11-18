@@ -102,9 +102,15 @@
         if (!a || (b.updatedAt || 0) > (a.updatedAt || 0)) { tgt[k] = b; n++; }
       });
     });
-    var sp = source && source.prefs;
     if (!target.prefs) target.prefs = assign({}, DEFAULT_PREFS);
-    if (sp && (sp.updatedAt || 0) > (target.prefs.updatedAt || 0)) { target.prefs = assign({}, DEFAULT_PREFS, sp); n++; }
+    ['prefs', 'lastStudy'].forEach(function (key) {
+      var sv = source && source[key];
+      if (!sv || typeof sv !== 'object') return;
+      if ((sv.updatedAt || 0) > ((target[key] && target[key].updatedAt) || 0)) {
+        target[key] = key === 'prefs' ? assign({}, DEFAULT_PREFS, sv) : sv;
+        n++;
+      }
+    });
     return n;
   }
 
@@ -122,7 +128,8 @@
   function snapshot() {
     return {
       app: 'japanese-flashcards', version: 1, savedAt: now(),
-      decks: state.decks, cards: state.cards, progress: state.progress, log: state.log, prefs: state.prefs
+      decks: state.decks, cards: state.cards, progress: state.progress, log: state.log,
+      prefs: state.prefs, lastStudy: state.lastStudy || null
     };
   }
 
@@ -136,17 +143,20 @@
 
   var state = loadState();
 
-  function isLiveDeck(id) { var d = state.decks[id]; return !!d && !d.deleted; }
-  function liveDecks() {
-    return values(state.decks).filter(function (d) { return !d.deleted; }).sort(function (a, b) {
+  // The optional `st` argument lets these work on data other than this
+  // computer's (used to preview a progress code before loading it).
+  function isLiveDeck(id, st) { var d = (st || state).decks[id]; return !!d && !d.deleted; }
+  function liveDecks(st) {
+    return values((st || state).decks).filter(function (d) { return !d.deleted; }).sort(function (a, b) {
       return (a.order || 0) - (b.order || 0) || a.name.localeCompare(b.name);
     });
   }
-  function liveCards(deckId) {
-    return values(state.cards).filter(function (c) {
-      return !c.deleted && isLiveDeck(c.deckId) && (!deckId || c.deckId === deckId);
+  function liveCards(deckId, st) {
+    st = st || state;
+    return values(st.cards).filter(function (c) {
+      return !c.deleted && isLiveDeck(c.deckId, st) && (!deckId || c.deckId === deckId);
     }).sort(function (a, b) {
-      var da = state.decks[a.deckId].order || 0, db = state.decks[b.deckId].order || 0;
+      var da = st.decks[a.deckId].order || 0, db = st.decks[b.deckId].order || 0;
       return da - db || (a.order || 0) - (b.order || 0);
     });
   }
@@ -189,6 +199,7 @@
       }
       p.reps++;
     }
+    p.ease = Math.round(p.ease * 100) / 100;
     p.lastReviewed = t;
     p.updatedAt = t;
     return p;
@@ -201,11 +212,12 @@
     return p.interval < 1 ? fmtDuration(p.interval * DAY) : fmtDuration(p.interval * DAY);
   }
 
-  function deckStats(deckId) {
+  function deckStats(deckId, st) {
+    st = st || state;
     var t = now(), s = { total: 0, fresh: 0, due: 0, learning: 0, mastered: 0 };
-    liveCards(deckId).forEach(function (c) {
+    liveCards(deckId, st).forEach(function (c) {
       s.total++;
-      var p = state.progress[c.id];
+      var p = st.progress[c.id];
       if (!p || !p.lastReviewed) { s.fresh++; return; }
       if (p.due <= t) s.due++;
       if (p.interval >= MASTERED_DAYS) s.mastered++; else s.learning++;
@@ -219,11 +231,26 @@
     state.log[k] = { count: ((prev && prev.count) || 0) + 1, updatedAt: now() };
   }
 
-  function streak() {
+  function streak(st) {
+    var log = (st || state).log || {};
     var d = new Date(), n = 0;
-    if (!(state.log[dayKey(d)] || {}).count) d.setDate(d.getDate() - 1);
-    while ((state.log[dayKey(d)] || {}).count) { n++; d.setDate(d.getDate() - 1); }
+    if (!(log[dayKey(d)] || {}).count) d.setDate(d.getDate() - 1);
+    while ((log[dayKey(d)] || {}).count) { n++; d.setDate(d.getDate() - 1); }
     return n;
+  }
+
+  // Remember what you studied last, so the home page can offer "Continue".
+  function touchLastStudy(deckIds, mode) {
+    var t = now();
+    state.lastStudy = { deckIds: deckIds, mode: mode, at: t, updatedAt: t };
+  }
+
+  function deckNames(ids, st) {
+    st = st || state;
+    var live = ids.filter(function (id) { return isLiveDeck(id, st); });
+    if (live.length > 1 && live.length === liveDecks(st).length) return 'All decks';
+    var names = live.map(function (id) { return st.decks[id].name; });
+    return names.length > 3 ? names.slice(0, 3).join(', ') + ' +' + (names.length - 3) + ' more' : names.join(', ');
   }
 
   // ------------------------------------------------------------------ study session
@@ -247,6 +274,8 @@
       return;
     }
     session = { deckIds: deckIds, mode: mode, queue: queue, total: queue.length, done: 0, again: 0, flipped: false, dir: null };
+    touchLastStudy(deckIds, mode);
+    commit();
     if (location.hash === '#/study') render(); else location.hash = '#/study';
   }
 
@@ -268,6 +297,7 @@
     if (!card) { session.queue.shift(); render(); return; }
     if (session.mode === 'review') state.progress[id] = schedule(state.progress[id], r, now());
     logReview();
+    touchLastStudy(session.deckIds, session.mode);
     commit();
     session.queue.shift();
     if (r === 1) {
@@ -453,7 +483,9 @@
 
   function parseRoute() {
     var parts = location.hash.replace(/^#\/?/, '').split('/');
-    return { view: parts[0] || 'home', arg: parts[1] ? decodeURIComponent(parts[1]) : null };
+    var arg = null;
+    try { arg = parts[1] ? decodeURIComponent(parts[1]) : null; } catch (e) { arg = parts[1]; }
+    return { view: parts[0] || 'home', arg: arg, rest: parts.slice(1).join('/') };
   }
 
   function render() {
@@ -463,7 +495,18 @@
       var active = a.getAttribute('data-nav') === view || (view === 'study' && a.getAttribute('data-nav') === 'home');
       a.classList.toggle('active', active);
     });
-    if (view === 'study') renderStudy();
+    if (view === 'load') {
+      // Opened a progress link: show the home page with the "load" preview on top.
+      history.replaceState(null, '', location.pathname + location.search + '#/');
+      view = 'home';
+      renderHome();
+      openLoadCode(r.rest);
+    } else if (view === 'connect') {
+      history.replaceState(null, '', location.pathname + location.search + '#/settings');
+      view = 'settings';
+      renderSettings();
+      connectFromLink(r.rest);
+    } else if (view === 'study') renderStudy();
     else if (view === 'cards') renderCards(r.arg);
     else if (view === 'settings') renderSettings();
     else { view = 'home'; renderHome(); }
@@ -494,7 +537,7 @@
     var resume = session && session.queue.length
       ? '<div class="resume"><strong>Session in progress</strong><span class="muted">' + plural(session.queue.length, 'card') + ' left</span><span class="spacer"></span>' +
         '<a class="btn primary sm" href="#/study">Resume</a><button class="btn sm ghost" data-act="end-session">Discard</button></div>'
-      : '';
+      : leftOffHtml();
 
     var tiles = decks.map(function (d) {
       var s = deckStats(d.id);
@@ -533,7 +576,31 @@
       '</div>' +
       '<div class="section-head"><h2>Decks</h2><span class="spacer"></span><button class="btn sm" data-act="new-deck">+ New deck</button></div>' +
       (decks.length ? '<div class="deck-grid">' + tiles + '</div>'
-        : '<div class="panel empty">You have no decks. <button class="btn primary sm" data-act="new-deck">Create one</button> or restore the defaults in Settings.</div>');
+        : '<div class="panel empty">You have no decks. <button class="btn primary sm" data-act="new-deck">Create one</button> or restore the defaults in Settings.</div>') +
+      '<div class="switch-row">' +
+        '<span><strong>Switching computers?</strong> <span class="muted">Copy your progress code here, then paste it on the other computer.</span></span>' +
+        '<span class="spacer"></span>' +
+        '<button class="btn sm" data-act="get-code">Get my progress code</button>' +
+        '<button class="btn sm" data-act="load-code">Paste a code</button>' +
+      '</div>';
+  }
+
+  function leftOffHtml() {
+    var ls = state.lastStudy;
+    if (!ls || !ls.deckIds) return '';
+    var ids = ls.deckIds.filter(function (id) { return isLiveDeck(id); });
+    if (!ids.length) return '';
+    var due = 0, fresh = 0;
+    ids.forEach(function (id) { var s = deckStats(id); due += s.due; fresh += s.fresh; });
+    var next = ls.mode === 'cram' ? 'practice'
+      : due ? plural(due, 'card') + ' due' + (fresh ? ', ' + fresh + ' new' : '')
+      : fresh ? fresh + ' new cards waiting' : 'all caught up ✓';
+    return '<div class="resume">' +
+      '<div><strong>Where you left off:</strong> ' + esc(deckNames(ids)) +
+        '<div class="muted small">' + (ls.mode === 'cram' ? 'Practiced ' : 'Studied ') + esc(fmtAgo(ls.at)) + ' · ' + esc(next) + '</div></div>' +
+      '<span class="spacer"></span>' +
+      '<button class="btn primary sm" data-act="continue">Continue</button>' +
+    '</div>';
   }
 
   // ---- study
@@ -712,6 +779,12 @@
         '<label class="check"><input type="checkbox" id="pref-reading"' + (p.readingOnFront ? ' checked' : '') + '> Show the reading (kana / romaji) on the front of the card</label>' +
         '<label class="check"><input type="checkbox" id="pref-speak"' + (p.autoSpeak ? ' checked' : '') + '> Read Japanese aloud automatically</label>' +
       '</section>' +
+      '<section class="panel"><h2>Progress code</h2>' +
+        '<p class="muted">Get a code (or link) that contains your cards and where you left off. Paste it on another computer to pick up from the same place. ' +
+        'Each code is a snapshot of that moment, so get a new code after you study. To keep computers in sync automatically, use Sync below.</p>' +
+        '<div class="row"><button class="btn primary" data-act="get-code">Get my progress code</button>' +
+        '<button class="btn" data-act="load-code">Paste a code</button></div>' +
+      '</section>' +
       '<section class="panel" id="sync-section"></section>' +
       '<section class="panel"><h2>Backup</h2>' +
         '<p class="muted">Download all your cards and progress as a file, or load a backup file. Importing merges with what you have (the newest version of each card wins).</p>' +
@@ -782,6 +855,7 @@
       'On another computer, open this app, go to Settings and paste a GitHub token from the same account.' +
       (Sync.cfg.gistId ? ' Data is stored in <a href="https://gist.github.com/' + encodeURIComponent(Sync.cfg.gistId) + '" target="_blank" rel="noopener">your private gist</a>.' : '') + '</p>' +
       '<div class="row"><button class="btn primary" data-act="sync-now"' + (Sync.status === 'syncing' ? ' disabled' : '') + '>Sync now</button>' +
+      (isOnline() ? '<button class="btn" data-act="sync-link">Get a setup link for another computer</button>' : '') +
       '<button class="btn danger" data-act="sync-disconnect">Disconnect this computer</button></div>';
   }
 
@@ -796,7 +870,7 @@
         '<h2>' + esc(opts.title) + '</h2>' +
         '<div class="modal-body">' + opts.body + '</div>' +
         '<div class="modal-actions">' + (opts.extra || '') + '<span class="spacer"></span>' +
-          '<button type="button" class="btn" data-modal-close>Cancel</button>' +
+          (opts.noCancel ? '' : '<button type="button" class="btn" data-modal-close>Cancel</button>') +
           '<button type="submit" class="btn primary">' + esc(opts.submit || 'Save') + '</button>' +
         '</div>' +
       '</form></div>';
@@ -806,9 +880,10 @@
       if (opts.onSubmit(form) !== false) closeModal();
     });
     backdrop.addEventListener('mousedown', function (e) { if (e.target === backdrop) closeModal(); });
-    form.querySelector('[data-modal-close]').addEventListener('click', closeModal);
+    var cancel = form.querySelector('[data-modal-close]');
+    if (cancel) cancel.addEventListener('click', closeModal);
     if (opts.onOpen) opts.onOpen(form);
-    var first = form.querySelector('input:not([type=hidden]), textarea, select');
+    var first = opts.noAutofocus ? null : form.querySelector('input:not([type=hidden]), textarea, select');
     if (first) first.focus();
     function onKey(e) { if (e.key === 'Escape') closeModal(); }
     document.addEventListener('keydown', onKey);
@@ -959,6 +1034,226 @@
     });
   }
 
+  // ------------------------------------------------------------------ progress codes & links
+  // A progress code is your data (only what differs from the starter cards),
+  // compressed and turned into text: "JPF1z.<base64url>". A progress link is
+  // the app's address + "#/load/<code>". Everything after "#" stays in the
+  // browser — it is never sent to any server.
+  var CODE_PREFIX = 'JPF1';
+  var lastCode = { code: '', link: '' };
+
+  function isOnline() { return location.protocol === 'http:' || location.protocol === 'https:'; }
+  function appBase() { return location.href.split('#')[0]; }
+
+  function copyText(text) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { /* ignore */ }
+      ta.remove();
+      toast(ok ? 'Copied! ✓' : 'Couldn\'t copy automatically — select the text and copy it.');
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { toast('Copied! ✓'); }, fallback);
+    } else fallback();
+  }
+
+  function bytesToB64url(bytes) {
+    var bin = '';
+    for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function b64urlToBytes(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    var bin = atob(str), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function pipeBytes(bytes, transform) {
+    return new Response(new Blob([bytes]).stream().pipeThrough(transform)).arrayBuffer()
+      .then(function (buf) { return new Uint8Array(buf); });
+  }
+
+  function codeData() {
+    var d = {
+      app: 'japanese-flashcards', v: 1, savedAt: now(), decks: {}, cards: {},
+      progress: state.progress, log: state.log, prefs: state.prefs, lastStudy: state.lastStudy || null
+    };
+    // Starter cards are already in every copy of the app; only send your changes.
+    Object.keys(state.decks).forEach(function (k) { if ((state.decks[k].updatedAt || 0) > 0) d.decks[k] = state.decks[k]; });
+    Object.keys(state.cards).forEach(function (k) { if ((state.cards[k].updatedAt || 0) > 0) d.cards[k] = state.cards[k]; });
+    return d;
+  }
+
+  function makeCode() {
+    var bytes = new TextEncoder().encode(JSON.stringify(codeData()));
+    if (!window.CompressionStream) return Promise.resolve(CODE_PREFIX + 'j.' + bytesToB64url(bytes));
+    return pipeBytes(bytes, new CompressionStream('deflate-raw'))
+      .then(function (z) { return CODE_PREFIX + 'z.' + bytesToB64url(z); });
+  }
+
+  // Accepts a bare code, a whole progress link, or text with a code inside it.
+  function readCode(input) {
+    var m = String(input || '').match(/JPF1([zj])\.([A-Za-z0-9_-]+)/);
+    if (!m) return Promise.reject(new Error('That doesn\'t look like a progress code. Codes start with "JPF1".'));
+    var bytes;
+    try { bytes = b64urlToBytes(m[2]); } catch (e) { return Promise.reject(new Error('The code is damaged. Try copying it again.')); }
+    var p;
+    if (m[1] === 'z') {
+      if (!window.DecompressionStream) return Promise.reject(new Error('This browser is too old to read progress codes. Try an up-to-date Chrome, Edge, Firefox or Safari.'));
+      p = pipeBytes(bytes, new DecompressionStream('deflate-raw'));
+    } else p = Promise.resolve(bytes);
+    return p.then(function (raw) {
+      var data = JSON.parse(new TextDecoder().decode(raw));
+      if (!data || data.app !== 'japanese-flashcards') throw new Error('bad');
+      return data;
+    }).catch(function () {
+      throw new Error('The code seems incomplete or damaged — make sure you copied all of it.');
+    });
+  }
+
+  function mini(num, label) {
+    return '<div class="mini"><div class="num">' + num + '</div><div class="lbl">' + esc(label) + '</div></div>';
+  }
+
+  function summaryHtml(st, savedAt) {
+    var all = deckStats(null, st);
+    var custom = values(st.cards).filter(function (c) {
+      return !c.deleted && (c.updatedAt || 0) > 0 && isLiveDeck(c.deckId, st);
+    }).length;
+    var ls = st.lastStudy;
+    var lsIds = ls && ls.deckIds ? ls.deckIds.filter(function (id) { return isLiveDeck(id, st); }) : [];
+    var left = lsIds.length ? esc(deckNames(lsIds, st)) + ' <span class="muted">· ' + esc(fmtAgo(ls.at)) + '</span>' : '<span class="muted">Nothing studied yet</span>';
+    return '<div class="summary">' +
+      '<div class="mini-stats">' +
+        mini(all.total - all.fresh, 'studied of ' + all.total) +
+        mini(all.mastered, 'mastered') +
+        mini(all.due, 'due now') +
+        mini(streak(st) + '🔥', 'day streak') +
+      '</div>' +
+      '<p class="small"><strong>Where you left off:</strong> ' + left + '</p>' +
+      (custom ? '<p class="small muted">Includes ' + plural(custom, 'card') + ' you added or edited.</p>' : '') +
+      (savedAt ? '<p class="small muted">Code made ' + esc(new Date(savedAt).toLocaleString()) + '.</p>' : '') +
+    '</div>';
+  }
+
+  function openGetCode() {
+    makeCode().then(function (code) {
+      lastCode = { code: code, link: appBase() + '#/load/' + code };
+      openModal({
+        title: 'Your progress code',
+        submit: 'Done',
+        noCancel: true,
+        noAutofocus: true,
+        body:
+          summaryHtml(state) +
+          '<label class="field"><span>Progress code</span>' +
+            '<textarea class="code-box" readonly rows="4" onclick="this.select()">' + esc(code) + '</textarea>' +
+            '<small>' + code.length.toLocaleString() + ' characters</small></label>' +
+          '<div class="row" style="margin-bottom:14px">' +
+            '<button type="button" class="btn primary" data-act="copy-code">Copy code</button>' +
+            (isOnline() ? '<button type="button" class="btn" data-act="copy-link">Copy link</button>' : '') +
+          '</div>' +
+          '<p class="small muted">On the other computer, open the app and click <strong>Paste a code</strong>' +
+            (isOnline() ? ', or just open the link' : '') + '. ' +
+            'Save it somewhere private, like an email or note to yourself. It contains your progress, not a password.' +
+            (isOnline() ? '' : '<br>(Links only work when the app is hosted online, e.g. on GitHub Pages. The code works everywhere.)') +
+          '</p>',
+        onSubmit: function () { return true; }
+      });
+    }).catch(function (e) { console.error(e); toast('Sorry, couldn\'t create a code in this browser.'); });
+  }
+
+  function openLoadCode(prefill) {
+    var decoded = null, seq = 0;
+    openModal({
+      title: 'Load progress from a code',
+      submit: 'Load this progress',
+      body:
+        '<label class="field"><span>Paste your progress code or link</span>' +
+          '<textarea name="code" class="code-box" rows="4" placeholder="JPF1z.…">' + esc(prefill || '') + '</textarea></label>' +
+        '<div id="code-preview"></div>',
+      onOpen: function (form) {
+        var ta = form.elements.code, out = form.querySelector('#code-preview');
+        function preview() {
+          var mine = ++seq;
+          decoded = null;
+          var v = ta.value.trim();
+          if (!v) { out.innerHTML = ''; return; }
+          out.innerHTML = '<p class="small muted">Reading code…</p>';
+          readCode(v).then(function (data) {
+            if (mine !== seq) return;
+            decoded = data;
+            var tmp = emptyState();
+            mergeInto(tmp, seedState());
+            mergeInto(tmp, data);
+            out.innerHTML = '<p class="small"><strong>This code contains:</strong></p>' + summaryHtml(tmp, data.savedAt) +
+              '<p class="small muted">Loading combines it with what\'s on this computer. For each card, the most recently studied version is kept, so nothing newer here is lost.</p>';
+          }, function (e) {
+            if (mine !== seq) return;
+            out.innerHTML = '<p class="status-line error">' + esc(e.message) + '</p>';
+          });
+        }
+        ta.addEventListener('input', preview);
+        if (prefill) preview();
+      },
+      onSubmit: function () {
+        if (!decoded) { toast('Paste a valid progress code first.'); return false; }
+        var n = mergeInto(state, decoded);
+        commit();
+        location.hash = '#/';
+        render();
+        toast(n ? 'Progress loaded ✓ — you\'re right where you left off.' : 'This computer is already up to date.');
+        return true;
+      }
+    });
+  }
+
+  // ---- sync setup link (contains your GitHub token)
+  function syncLink() { return appBase() + '#/connect/' + encodeURIComponent(Sync.cfg.token || ''); }
+
+  function openSyncLink() {
+    openModal({
+      title: 'Set up sync on another computer',
+      submit: 'Done',
+      noCancel: true,
+      noAutofocus: true,
+      body:
+        '<p>Open this link on your other computer. It turns on sync there automatically, so you never have to paste a token again.</p>' +
+        '<label class="field"><span>Setup link</span><textarea class="code-box" readonly rows="3" onclick="this.select()">' + esc(syncLink()) + '</textarea></label>' +
+        '<div class="row" style="margin-bottom:14px"><button type="button" class="btn primary" data-act="copy-sync-link">Copy link</button></div>' +
+        '<p class="status-line error small">🔒 Treat this link like a password. It contains your GitHub token, so send it only to yourself ' +
+        '(e.g. an email to yourself) and don\'t share it.</p>',
+      onSubmit: function () { return true; }
+    });
+  }
+
+  function connectFromLink(rest) {
+    var token = '';
+    try { token = decodeURIComponent(rest || '').trim(); } catch (e) { /* ignore */ }
+    if (!token) return;
+    if (Sync.cfg.token === token) { toast('Sync is already on for this computer ✓'); Sync.run(); return; }
+    openModal({
+      title: 'Turn on sync on this computer?',
+      submit: 'Turn on sync',
+      body: '<p>You opened a sync setup link. This computer will start syncing with your GitHub account, ' +
+        'and your cards and progress from your other computers will load here.</p>' +
+        (Sync.enabled() ? '<p class="small muted">This replaces the sync connection this computer already has.</p>' : ''),
+      onSubmit: function () {
+        Sync.connect(token).then(function () {
+          if (Sync.status === 'ok') { toast('Sync is on — your progress is loaded ✓'); render(); }
+        });
+        return true;
+      }
+    });
+  }
+
   // ------------------------------------------------------------------ backup
   function exportData() {
     var blob = new Blob([JSON.stringify(snapshot(), null, 2)], { type: 'application/json' });
@@ -1027,6 +1322,17 @@
       Sync.disconnect(); toast('Sync turned off on this computer');
     },
     'export': exportData,
+    'continue': function () {
+      var ls = state.lastStudy;
+      var ids = ((ls && ls.deckIds) || []).filter(function (id) { return isLiveDeck(id); });
+      if (ids.length) startSession(ids, ls.mode === 'cram' ? 'cram' : 'review');
+    },
+    'get-code': openGetCode,
+    'load-code': function () { openLoadCode(''); },
+    'copy-code': function () { copyText(lastCode.code); },
+    'copy-link': function () { copyText(lastCode.link); },
+    'sync-link': openSyncLink,
+    'copy-sync-link': function () { copyText(syncLink()); },
     'import': function () { $('#import-file').click(); },
     'reset-progress': function () {
       if (!confirm('Reset ALL study progress? Every card will become new again. Your cards are kept.')) return;
